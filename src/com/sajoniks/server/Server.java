@@ -1,49 +1,60 @@
 package com.sajoniks.server;
 
-import java.io.*;
+import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.nio.charset.StandardCharsets;
-import java.util.Scanner;
+import java.util.ArrayDeque;
+import java.util.Queue;
 
 public class Server {
 
     private static final int PORT = 8080;
+    private static final int MAX_CONNECTIONS = 16;
+    private static final Queue<ClientThread> Connections = new ArrayDeque<>(MAX_CONNECTIONS);
 
     public static void main(String[] args) {
-        try(ServerSocket s = new ServerSocket(PORT))
-        {
-            try(Socket incoming = s.accept())
-            {
-                InputStream inputStream = incoming.getInputStream();
-                OutputStream outputStream = incoming.getOutputStream();
+        try(ServerSocket s = new ServerSocket(PORT)) {
+            while(true) {
+                try {
+                    Socket sock = s.accept();
+                    ClientThread clientThread = new ClientThread(sock);
+                    Thread thread = new Thread(clientThread);
 
-                try(Scanner in = new Scanner(new InputStreamReader(inputStream, StandardCharsets.UTF_8)))
-                {
-                    PrintWriter printWriter = new PrintWriter(
-                            new OutputStreamWriter(outputStream, StandardCharsets.UTF_8),
-                            /*auto flush*/ true
-                    );
+                    Connections.add(clientThread);
 
-                    printWriter.println("Connection established. Use EXIT to close connection");
-                    while(in.hasNextLine())
-                    {
-                        String input = in.nextLine().trim();
-
-                        printWriter.println(String.format("You entered: %s", input));
-
-                        if (input.compareToIgnoreCase("EXIT") == 0) break;
-                    }
+                    thread.start();
                 }
-                catch (Exception e)
-                {
-                    e.printStackTrace(System.out);
+                catch (Exception e) {
+
                 }
             }
+
         }
-        catch (IOException e)
-        {
+        catch (IOException e) {
             System.out.printf("Failed to start server at port %d%n", PORT);
         }
+    }
+
+    public static void onClientExit(ClientThread th) {
+        synchronized(Connections) {
+            Connections.remove(th);
+        }
+    }
+
+    private static void multicastMessage(ClientThread th, String message, boolean receiveSelf) {
+        synchronized (Connections) {
+            for (ClientThread con : Connections) {
+                if (con == th && !receiveSelf) continue;
+                con.receiveMulticastMessage(th, message);
+            }
+        }
+    }
+
+    public static void onClientMessageMulticast(ClientThread th, String message, boolean receiveSelf) {
+        multicastMessage(th, String.format("%s > %s", th.getNickname(), message), receiveSelf);
+    }
+
+    public static void onWelcomeUserMulticast(ClientThread th) {
+        multicastMessage(th, String.format("%s entered chat!", th.getNickname()), false);
     }
 }
